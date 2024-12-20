@@ -1,0 +1,29 @@
+name: medulloblastoma
+channels:
+  - bioconda
+  - conda-forge
+  - defaults
+  - r
+dependencies:
+  - python=3.11.8
+  - r-base=4.3.2
+  - pip
+  - r-argparse
+  - bioconductor-geoquery
+  - bioconductor-consensusclusterplus
+  - r-gprofiler2
+  - pip:
+    - matplotlib
+    - mygene
+    - numpy
+    - optuna
+    - pandas
+    - requests
+    - scikit-posthocs
+    - scipy
+    - shap
+    - scikit-learn
+    - torch
+    - tqdm
+    - umap-learn
+    - xgboost
