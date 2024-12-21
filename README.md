@@ -88,7 +88,8 @@ This is the most computationally expensive step to perform the explanations.
 For us, this took about 18 hours on 112 cores.
 13. `src/check_noise_ratio.py` checks the noise ratio in the synthetic data, comparing the genration of the synthetic data in the real data and the latent space plus reconstruction.
 14. `src/genes_reconstruction.py` checks the reconstruction error of the genes and patients with Wasserstein distance, before and after applying the postprocessing network to the VAE-decoded data.
-15. `src/gprofiler.R` performs gene set enrichment analysis on the genes determined to be important in step 12.
+15. `python src/diff_genes_comparison.py` finds the overlap between differentially expressed genes and external data (Northcott et al. 2019 and Núñez-Carpintero et al. 2021).
+16. `src/gprofiler.R` performs gene set enrichment analysis on the genes determined to be important in step 12.
 
 Finally, the Jupyter Notebook `putting_results_together.ipynb` contains the code for ad-hoc processes that were not included in the `src` folder codes.
 
