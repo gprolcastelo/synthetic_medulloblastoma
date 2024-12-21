@@ -288,7 +288,13 @@ python src/genes_reconstruction.py --data_path $preprocessed_data_path \
                                 --hyperparam_path ${adjust_path}/best_hyperparameters.csv \
                                 --save_path ${current_dir}/reports/figures/${today}_reconstruction_error
 
-# 15. Enrichment analysis with gprofiler
+# 15. Overlap of genes with external data
+python src/diff_genes_comparison.py --external_genes data/external/Supplementary_Table_5.csv \
+                                                               --internal_genes_differential ${kw_path}/synth_patients/always_diff_genes.csv \
+                                                               --group_of_interest G3_G4 \
+                                                               --save_path data/processed/${today}_genes_comparison/real_patients
+
+# 16. Enrichment analysis with gprofiler
 Rscript src/gprofiler.R ${shap_save_path}/selected_genes.csv ${current_dir}/data/processed/${today}_gprofiler_enrichment
 
 echo "Done with the pipeline."
