@@ -34,6 +34,8 @@ Follow these steps:
     conda activate medulloblastoma
     ```
 
+Installation with conda should take about one hour.
+
 ## Usage
 After setting up the environment, you can start using the scripts provided in the repository. The main pipeline script is `pipeline.sh`, which runs the entire analysis pipeline.
 
