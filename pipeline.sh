@@ -145,28 +145,28 @@ python src/group_classification.py --path_data ${vae_data_path}/postprocessed.cs
 python src/visualization/visualize.py --data_path $data_path \
                                       --metadata_path $metadata_path \
                                       --save_path ${current_dir}/reports/figures/${today}_umap_original \
-                                      --groups "SHH WNT Group3 Group4" \
+                                      --groups "SHH, WNT, Group 3, Group 4" \
                                       --n_components 2 \
                                       --seed 2023
 ## Preprocessed data
 python src/visualization/visualize.py --data_path $data_path \
                                       --metadata_path $metadata_path \
                                       --save_path ${current_dir}/reports/figures/${today}_umap_preprocessed \
-                                      --groups "SHH WNT Group3 Group4" \
+                                      --groups "SHH, WNT, Group 3, Group 4" \
                                       --n_components 2 \
                                       --seed 2023
 ## Latent space
 python src/visualization/visualize.py --data_path ${vae_data_path}/z.csv \
                                       --metadata_path $metadata_path \
                                       --save_path ${current_dir}/reports/figures/${today}_umap_latent \
-                                      --groups "SHH WNT Group3 Group4" \
+                                      --groups "SHH, WNT, Group 3, Group 4" \
                                       --n_components 2 \
                                       --seed 2023
 ## Postprocessed data
 python src/visualization/visualize.py --data_path ${vae_data_path}/postprocessed.csv \
                                       --metadata_path $metadata_path \
                                       --save_path ${current_dir}/reports/figures/${today}_umap_postprocessed \
-                                      --groups "SHH WNT Group3 Group4" \
+                                      --groups "SHH, WNT, Group 3, Group 4" \
                                       --n_components 2 \
                                       --seed 2023
 
