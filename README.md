@@ -20,8 +20,8 @@ Follow these steps:
 
 1. Clone the repository:
     ```bash
-    git clone https://github.com/gprolcastelo/scratchmedulloblastoma.git
-    cd scratchmedulloblastoma
+    git clone https://github.com/gprolcastelo/synthetic_medulloblastoma.git
+    cd synthetic_medulloblastoma
     ```
 
 2. Create the conda environment:
@@ -103,3 +103,4 @@ Feel free to clone or fork the repository.
 
 ## License
 This project is licensed under the Apache 2.0 License. See the [LICENSE](LICENSE) file for more details.
+
