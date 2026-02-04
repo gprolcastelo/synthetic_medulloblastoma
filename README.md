@@ -101,6 +101,25 @@ Contributions generally not expected. However, if you have any suggestions or im
 On the other hand, this is an open-source, open-science project, and so you are encouraged to reproduce our results.
 Feel free to clone or fork the repository.
 
+## Citation
+If you use or base your code on this repository, please cite our publication, either in text format
+
+Prol-Castelo, G., Tejada-Lapuerta, A., Urda-García, B., Núñez-Carpintero, I., Valencia, A., & Cirillo, D. (2024). Exploring the boundaries of medulloblastoma subgroups with synthetic data generation. bioRxiv. https://doi.org/10.1101/2024.12.30.630738
+
+or with BibTex:
+
+```bibtex
+@misc{prol-castelo_exploring_2024,
+  title = {Exploring the {Boundaries} of {Medulloblastoma} {Subgroups} with {Synthetic} {Data} {Generation}},
+  url = {http://biorxiv.org/lookup/doi/10.1101/2024.12.30.630738},
+  doi = {10.1101/2024.12.30.630738},
+  author = {Prol-Castelo, Guillermo and Tejada-Lapuerta, Alejandro and Urda-García, Beatriz and Núñez-Carpintero, Iker and Valencia, Alfonso and Cirillo, Davide},
+  month = dec,
+  year = {2024}
+}
+```
+
 ## License
 This project is licensed under the Apache 2.0 License. See the [LICENSE](LICENSE) file for more details.
+
 
