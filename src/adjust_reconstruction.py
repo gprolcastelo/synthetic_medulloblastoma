@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from sklearn.preprocessing import OneHotEncoder
 from src.models.train_model import set_seed
 from src.models.my_model import VAE, CVAE
-from src.utils import apply_VAE, get_hyperparams
+from src.utils import apply_VAE, get_hyperparams, load_presplit_data
 from sklearn.model_selection import train_test_split
 import optuna
 plt.style.use('ggplot')
@@ -193,43 +193,61 @@ def objective(trial,idim,df_reconstruction,data,loader_index_train, loader_index
 def main(args):
     """
     This script uses a deep neural network to adjust the reconstruction of the VAE model.
-    We
-    :return:
+    It loads pre-computed train/test splits from preprocessing to ensure no data leakage.
     """
 
     os.makedirs(args.output_path, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     # Load data
-    data, clinical = load_data(args.data_path, args.clinical_path)
+    if args.preprocessing_path is not None:
+        # Load pre-split data from preprocessing
+        print(f'Loading pre-split data from {args.preprocessing_path}')
+        data_train, data_test, clinical_train, clinical_test = load_presplit_data(args.preprocessing_path)
+        # Combine train and test for full data (needed for VAE reconstruction on all data)
+        data = pd.concat([data_train, data_test], axis=0)
+        clinical = pd.concat([clinical_train, clinical_test], axis=0)
+    else:
+        # Use old method (deprecated)
+        data, clinical = load_data(args.data_path, args.clinical_path)
+        # Split into train and test using the same seed
+        data_train, data_test, clinical_train, clinical_test = train_test_split(
+            data, clinical, test_size=args.test_size, stratify=clinical, random_state=args.seed
+        )
+
     categs = sorted(clinical.unique())
     stage_to_int = {key:i for i,key in enumerate(categs)}
-    clinical.replace(stage_to_int,inplace=True)
-    # categs_int = sorted(clinical.unique())
+    clinical_int = clinical.copy()
+    clinical_int.replace(stage_to_int, inplace=True)
+
     # Load model and get reconstruction
     if args.cvae:
         model_here = CVAE
     else:
         model_here = VAE
-    reconstruction, z, clinical_onehot, model_vae, scaler=load_model(
+
+    reconstruction, z, clinical_onehot, model_vae, scaler = load_model(
         model_path=args.model_path,
         model_here=model_here,
         data=data,
-        classes=clinical,
+        classes=clinical_int,
         device=device,
         seed=args.seed,
         cvae=args.cvae)
+
     df_reconstruction = pd.DataFrame(reconstruction, index=data.index, columns=data.columns)
-    # One hot encode the classes data:
-    # y = np.array(clinical).reshape(-1, 1) # Reshape the array
-    # ohe = OneHotEncoder(categories=[categs_int], handle_unknown='ignore', sparse_output=False, dtype=np.int8).fit(y)
-    # y = ohe.transform(y)
-    # Split into train and test
-    x_rec_train, x_rec_test, y_rec_train, y_rec_test = train_test_split(reconstruction, clinical, test_size=args.test_size, stratify=clinical,random_state=args.seed)
-    x_data_train, x_data_test, _, _ = train_test_split(data, clinical, test_size=args.test_size, stratify=clinical,random_state=args.seed)
+
+    # Use pre-split indices for train/test split
+    x_rec_train = df_reconstruction.loc[data_train.index]
+    x_rec_test = df_reconstruction.loc[data_test.index]
+    y_rec_train = clinical_train
+    y_rec_test = clinical_test
+    x_data_train = data_train
+    x_data_test = data_test
+
     # Get DataLoaders
-    # partition = {'train': y_rec_train.index.tolist(), 'test': y_rec_test.index.tolist()}
-    # labels = {key:i for i,key in zip(clinical.index.tolist(),clinical.values.tolist())}
     loader_index_train, loader_index_test = as_dataloader(y_rec_train.index, y_rec_test.index, batch_size=args.batch_size)
+
     # Hyperparameter optimization
     study = optuna.create_study(direction='minimize')
     study.optimize(lambda trial:
@@ -249,26 +267,30 @@ def main(args):
     print(f"Best hyperparameters: {best_params}")
     df_best_hyperparams = pd.DataFrame([best_params])
     df_best_hyperparams.to_csv(os.path.join(args.output_path, "best_hyperparameters.csv"))
+
     # Train the network with the best hyperparameters
     network_dims = [
-    x_rec_train.shape[1],
-    best_params['layer1_dim'],
-    best_params['layer2_dim'],
-    best_params['layer3_dim'],
-    x_rec_train.shape[1]
+        x_rec_train.shape[1],
+        best_params['layer1_dim'],
+        best_params['layer2_dim'],
+        best_params['layer3_dim'],
+        x_rec_train.shape[1]
     ]
     network = NetworkReconstruction(network_dims)
     best_network, loss_train, loss_test = train_network_reconstruction(
         network, df_reconstruction, data, loader_index_train, loader_index_test,
         epochs=args.epochs, lr=args.lr, device=device
     )
+
     # Save the network
-    os.makedirs(os.path.dirname(args.output_recnet_path), exist_ok=True) # create the output directory
+    os.makedirs(os.path.dirname(args.output_recnet_path), exist_ok=True)  # create the output directory
     torch.save(network.state_dict(), args.output_recnet_path)
     print("Network saved to", args.output_recnet_path)
+
     # Save the losses
     pd.DataFrame(loss_train).to_csv(os.path.join(args.output_path, "loss_train.csv"))
     pd.DataFrame(loss_test).to_csv(os.path.join(args.output_path, "loss_test.csv"))
+
     # Plot the losses
     plot_losses(loss_train, loss_test, save_path=os.path.join(args.output_path, "losses.png"))
     return None
@@ -278,8 +300,12 @@ if __name__ == '__main__':
     import argparse
     args = argparse.ArgumentParser(description='Adjust the reconstruction of the VAE model')
     args.add_argument('--model_path', type=str, default=None)
-    args.add_argument('--data_path', type=str, default=None)
-    args.add_argument('--clinical_path', type=str, default=None)
+    args.add_argument('--data_path', type=str, default=None,
+                      help='Path to RNA-seq data (deprecated: use preprocessing_path instead)')
+    args.add_argument('--clinical_path', type=str, default=None,
+                      help='Path to clinical metadata (deprecated: use preprocessing_path instead)')
+    args.add_argument('--preprocessing_path', type=str, default=None,
+                      help='Path to preprocessing output directory containing pre-split train/test data')
     args.add_argument('--output_path', type=str, default=None)
     args.add_argument('--output_recnet_path', type=str, default=None)
     args.add_argument('--batch_size', type=int, default=8)

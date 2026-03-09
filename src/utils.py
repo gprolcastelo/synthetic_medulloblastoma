@@ -102,3 +102,33 @@ def get_hyperparams(model_path):
             return idim, md, feat
         else:
             raise ValueError("Pattern not found in model_path")
+
+def load_presplit_data(preprocessing_path):
+    """
+    Load pre-computed train/test split data from preprocessing step.
+    This ensures consistent splits across all model training scripts.
+
+    Parameters:
+    -----------
+    preprocessing_path : str
+        Path to the preprocessing output directory containing the split data
+
+    Returns:
+    --------
+    data_train : pd.DataFrame
+        Training data
+    data_test : pd.DataFrame
+        Testing data
+    clinical_train : pd.Series
+        Training clinical metadata
+    clinical_test : pd.Series
+        Testing clinical metadata
+    """
+    import os
+
+    data_train = pd.read_csv(os.path.join(preprocessing_path, 'cavalli_maha_train.csv'), index_col=0)
+    data_test = pd.read_csv(os.path.join(preprocessing_path, 'cavalli_maha_test.csv'), index_col=0)
+    clinical_train = pd.read_csv(os.path.join(preprocessing_path, 'clinical_train.csv'), index_col=0).squeeze()
+    clinical_test = pd.read_csv(os.path.join(preprocessing_path, 'clinical_test.csv'), index_col=0).squeeze()
+
+    return data_train, data_test, clinical_train, clinical_test

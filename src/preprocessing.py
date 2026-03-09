@@ -146,10 +146,39 @@ def main(args):
     data_preprocessed = preprocess(data=data.T,per=args.per,cutoff=args.cutoff)
     # Mahalanobis
     data_maha=maha_outliers(data=data_preprocessed,save_path=args.save_path,alpha=args.alpha)
-    data_maha.T.to_csv(os.path.join(args.save_path, 'cavalli_maha.csv'))
+    data_maha_transposed = data_maha.T
+    data_maha_transposed.to_csv(os.path.join(args.save_path, 'cavalli_maha.csv'))
     # Get data for groups 3 and 4, after preprocessing
-    data_g3g4_maha = get_g3g4(data=data_maha.T,groups=groups)
+    data_g3g4_maha = get_g3g4(data=data_maha_transposed,groups=groups)
     data_g3g4_maha.to_csv(os.path.join(args.save_path, 'g3g4_maha.csv'))
+
+    # Create train/test split and save indices
+    from sklearn.model_selection import train_test_split
+    # Get clinical groups for stratified split
+    clinical_filtered = groups[groups.index.isin(data_maha_transposed.index)]
+    # Stratified split with seed to ensure reproducibility
+    train_indices, test_indices = train_test_split(
+        np.arange(len(data_maha_transposed)),
+        test_size=args.test_size,
+        stratify=clinical_filtered.values,
+        random_state=args.seed
+    )
+    # Extract train and test data and metadata
+    data_train = data_maha_transposed.iloc[train_indices]
+    data_test = data_maha_transposed.iloc[test_indices]
+    clinical_train = clinical_filtered.iloc[train_indices]
+    clinical_test = clinical_filtered.iloc[test_indices]
+
+    # Save train/test splits
+    data_train.to_csv(os.path.join(args.save_path, 'cavalli_maha_train.csv'))
+    data_test.to_csv(os.path.join(args.save_path, 'cavalli_maha_test.csv'))
+    clinical_train.to_csv(os.path.join(args.save_path, 'clinical_train.csv'))
+    clinical_test.to_csv(os.path.join(args.save_path, 'clinical_test.csv'))
+
+    # Save indices for reference
+    pd.DataFrame(train_indices, columns=['index']).to_csv(os.path.join(args.save_path, 'train_indices.csv'), index=False)
+    pd.DataFrame(test_indices, columns=['index']).to_csv(os.path.join(args.save_path, 'test_indices.csv'), index=False)
+
     print('done preprocessing')
 
 
@@ -163,6 +192,8 @@ if __name__=='__main__':
     parser.add_argument('--per', type=float, help='Filter out genes when they have this percentage of samples with 0 expression',default=0.2)
     parser.add_argument('--cutoff', type=float, help='Filter out genes with variance below this value',default=0.1)
     parser.add_argument('--alpha', type=float, help='alpha for Mahalanobis',default=0.05)
+    parser.add_argument('--test_size', type=float, help='Proportion of data to use for testing',default=0.2)
+    parser.add_argument('--seed', type=int, help='Random seed for reproducibility',default=2023)
     args = parser.parse_args()
     plt.style.use('ggplot')
     main(args)

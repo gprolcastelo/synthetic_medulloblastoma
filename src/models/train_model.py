@@ -940,3 +940,93 @@ def as_dataloader(data_train,data_test,batch_size):
         shuffle=False,
     )
     return loader_train, loader_test
+
+def data2tensor_presplit(preprocessing_path, batch_size, cvae=False):
+    '''
+    Loads pre-computed train/test split data from preprocessing step.
+    This ensures consistent splits across all model training scripts and prevents data leakage.
+
+    Parameters:
+    preprocessing_path (str): Path to the preprocessing output directory containing the split data
+    batch_size (int): The size of the batches for the DataLoader
+    cvae (bool): Whether to use CVAE (requires one-hot encoded clinical data)
+
+    Returns:
+    train_dataset (tensor): Tensor of the training data
+    loader_train (DataLoader): DataLoader for the training data
+    test_dataset (tensor): Tensor of the testing data
+    loader_test (DataLoader): DataLoader for the testing data
+    loader_train_clinical (DataLoader or None): DataLoader for training clinical data (if cvae=True)
+    loader_test_clinical (DataLoader or None): DataLoader for testing clinical data (if cvae=True)
+    '''
+    import os
+    # Load pre-split data
+    data_train = pd.read_csv(os.path.join(preprocessing_path, 'cavalli_maha_train.csv'), index_col=0)
+    data_test = pd.read_csv(os.path.join(preprocessing_path, 'cavalli_maha_test.csv'), index_col=0)
+    clinical_train = pd.read_csv(os.path.join(preprocessing_path, 'clinical_train.csv'), index_col=0).squeeze()
+    clinical_test = pd.read_csv(os.path.join(preprocessing_path, 'clinical_test.csv'), index_col=0).squeeze()
+
+    # Transpose for training (samples as columns -> samples as rows)
+    data_train = data_train.T
+    data_test = data_test.T
+    print("The shape of the train data is (genes: features, patients: samples): ", data_train.shape)
+    print("The shape of the test data is (genes: features, patients: samples): ", data_test.shape)
+
+    # Normalize data
+    normalized_data_train, normalized_data_test = normalize_data(data_train, data_test)
+    normalized_data_train = pd.DataFrame(normalized_data_train)
+    normalized_data_test = pd.DataFrame(normalized_data_test)
+    train_dataset = torch.tensor(normalized_data_train.values).to(torch_dtype)
+    test_dataset = torch.tensor(normalized_data_test.values).to(torch_dtype)
+
+    # Create DataLoaders
+    loader_train = torch.utils.data.DataLoader(
+        train_dataset.T,
+        batch_size=batch_size,
+        shuffle=True,
+    )
+    loader_test = torch.utils.data.DataLoader(
+        test_dataset.T,
+        batch_size=batch_size,
+        shuffle=False,
+    )
+
+    print('DataLoader created from pre-split data')
+    print('len(loader_test.dataset)=', len(loader_test.dataset))
+    print('len(loader_train.dataset)=', len(loader_train.dataset))
+
+    if cvae:
+        # Create DataLoader for clinical data
+        # One-hot encode the clinical data for classification
+        stage_to_int = {'WNT': 1, 'SHH': 2, 'Group3': 3, 'Group4': 4, 'Group 3': 3, 'Group 4': 4}
+        y_train = [stage_to_int[subgroup] for subgroup in clinical_train]
+        y_test = [stage_to_int[subgroup] for subgroup in clinical_test]
+
+        categs = sorted(set(y_train + y_test))
+        y_train = np.array(y_train).reshape(-1, 1)
+        y_test = np.array(y_test).reshape(-1, 1)
+
+        ohe = OneHotEncoder(categories=[categs], handle_unknown='ignore', sparse_output=False, dtype=np.int8).fit(y_train)
+        y_train = ohe.transform(y_train)
+        y_test = ohe.transform(y_test)
+
+        y_train = torch.tensor(y_train).to(torch_dtype)
+        y_test = torch.tensor(y_test).to(torch_dtype)
+
+        loader_train_clinical = torch.utils.data.DataLoader(
+            y_train,
+            batch_size=batch_size,
+            shuffle=True,
+        )
+        loader_test_clinical = torch.utils.data.DataLoader(
+            y_test,
+            batch_size=batch_size,
+            shuffle=False,
+        )
+
+        print('y_train.shape=', y_train.shape)
+        print('y_test.shape=', y_test.shape)
+
+        return train_dataset, loader_train, test_dataset, loader_test, loader_train_clinical, loader_test_clinical
+    else:
+        return train_dataset, loader_train, test_dataset, loader_test, None, None

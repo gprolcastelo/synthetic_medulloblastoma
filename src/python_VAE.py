@@ -12,10 +12,12 @@ parser.add_argument('--f', type=int, required=True, help='The f value')
 parser.add_argument('--lr', type=float, required=True, help='The lr value')
 parser.add_argument('--path_rnaseq', type=str,
                     default='../data/interim/20240213_data_VAE_ductal/rnaseq.csv',
-                    help='The directory of thernaseq data')
+                    help='The directory of thernaseq data (deprecated: use preprocessing_path instead)')
 parser.add_argument('--path_clinical', type=str,
                     default='../data/interim/20230905_preprocessed_anew/CuratedClinicalData.csv',
-                    help='The directory of the clinical metadata')
+                    help='The directory of the clinical metadata (deprecated: use preprocessing_path instead)')
+parser.add_argument('--preprocessing_path', type=str, default=None,
+                    help='Path to preprocessing output directory containing pre-split train/test data')
 parser.add_argument('--save_path', type=str, help='The directory to save the model')
 parser.add_argument('--save_model', action='store_true',
                     help='Whether to save the model or not')
@@ -32,6 +34,7 @@ lr = args.lr
 name=f'retraining_md{mid_dim}_f{features}_lr{lr}'
 path_clinical=args.path_clinical
 path_rnaseq=args.path_rnaseq
+preprocessing_path=args.preprocessing_path
 # input_data_type=args.input_data_type
 cvae=args.cvae
 
@@ -77,11 +80,43 @@ if cvae:
     from models.my_model import CVAE
     print('Using CVAE...')
     # Load data
-    data_tensor, labels_onehot, loader_index_train, loader_index_test = load_data_cvae(
-        path_rnaseq=path_rnaseq,
-        path_clinical=path_clinical,
-        batch_size=ch_batch_size
-    )
+    if preprocessing_path is not None:
+        print(f'Loading pre-split data from {preprocessing_path}')
+        # Use pre-split data from preprocessing
+        data_tensor, loader_train, test_dataset, loader_test, loader_train_clinical, loader_test_clinical = data2tensor_presplit(
+            preprocessing_path=preprocessing_path,
+            batch_size=ch_batch_size,
+            cvae=True
+        )
+        # For CVAE, we need to convert loaders to index-based loaders and get the full data/labels tensors
+        # Extract full data and labels from the loaders
+        all_data = []
+        all_labels = []
+        for data_batch in loader_train:
+            all_data.append(data_batch)
+        for data_batch in loader_test:
+            all_data.append(data_batch)
+        data_tensor = torch.cat(all_data, dim=0)
+
+        # Combine clinical data
+        for label_batch in loader_train_clinical:
+            all_labels.append(label_batch)
+        for label_batch in loader_test_clinical:
+            all_labels.append(label_batch)
+        labels_onehot = torch.cat(all_labels, dim=0)
+
+        # Create index loaders
+        train_size = len(loader_train.dataset)
+        test_size = len(loader_test.dataset)
+        train_indices = list(range(train_size))
+        test_indices = list(range(train_size, train_size + test_size))
+        loader_index_train, loader_index_test = as_dataloader(train_indices, test_indices, ch_batch_size)
+    else:
+        data_tensor, labels_onehot, loader_index_train, loader_index_test = load_data_cvae(
+            path_rnaseq=path_rnaseq,
+            path_clinical=path_clinical,
+            batch_size=ch_batch_size
+        )
     # print('type(data_tensor) =\t',type(data_tensor))
     # print('type(labels_onehot) =\t',type(labels_onehot))
     # Load model
@@ -125,14 +160,22 @@ else:
 
 
     # Load data as tensor:
-    train_data, train_loader, test_data, test_loader, loader_train_clinical, loader_test_clinical = data2tensor(
-        path_rnaseq = path_rnaseq,
-        path_clinical = path_clinical,
-        batch_size = ch_batch_size,
-        cvae = cvae,
-        wsr = False,
-        save_path=save_path,
-    )
+    if preprocessing_path is not None:
+        print(f'Loading pre-split data from {preprocessing_path}')
+        train_data, train_loader, test_data, test_loader, loader_train_clinical, loader_test_clinical = data2tensor_presplit(
+            preprocessing_path=preprocessing_path,
+            batch_size=ch_batch_size,
+            cvae=cvae,
+        )
+    else:
+        train_data, train_loader, test_data, test_loader, loader_train_clinical, loader_test_clinical = data2tensor(
+            path_rnaseq = path_rnaseq,
+            path_clinical = path_clinical,
+            batch_size = ch_batch_size,
+            cvae = cvae,
+            wsr = False,
+            save_path=save_path,
+        )
 
     input_dim = train_data.shape[0]
     num_patients = train_data.shape[1]+test_data.shape[1]

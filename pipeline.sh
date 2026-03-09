@@ -10,7 +10,7 @@ metadata_path="${current_dir}/data/raw/GEO/cavalli_subgroups.csv"
 
 # Define the model name and paths to save the results
 model="VAE"
-batch_size=8
+batch_size=64
 model_path="${current_dir}/models/${today}_${model}"
 path_to_vae_results="${current_dir}/data/interim/${today}_${model}_batches"
 output_rec_path="${current_dir}/data/interim/${today}_${model}_adjust_reconstruction"
@@ -20,26 +20,30 @@ mkdir -p err_out
 mkdir -p $model_path
 
 # 0. Obain data
-Rscript get_data.R
-python prepare_data.py
-exit 1
+#Rscript src/get_data.R
+#python src/prepare_data.py
+#exit 1
 # 1. Preprocessing
-python src/preprocessing.py --data_path $data_path \
-							--metadata_path $metadata_path \
-							--save_path $preprocessing_path \
-							--per 0.2 \
-							--cutoff 0.1 \
-							--alpha 0.05
-
+# NOTE: This step creates a train/test data split used by all downstream models
+#python src/preprocessing.py --data_path $data_path \
+#							--metadata_path $metadata_path \
+#							--save_path $preprocessing_path \
+#							--per 0.2 \
+#							--cutoff 0.1 \
+#							--alpha 0.05 \
+#							--test_size 0.2 \
+#							--seed 2023
 # 2. Train VAE with a combination of hyperparameters
-for md in 256 512 1024 2048 4096; do
-  for f in 8 16 32 64 128 256 512; do
-    for lr in 0.00001 0.0001 0.001; do
+#for md in 256 512 1024 2048 4096; do
+#  for f in 8 16 32 64 128 256 512; do
+#    for lr in 0.00001 0.0001 0.001; do
+for md in 1024; do
+  for f in 64; do
+    for lr in 0.0001; do
       python src/python_VAE.py --md $md \
                                                    --f $f \
                                                    --lr $lr \
-                                                   --path_rnaseq $preprocessed_data_path \
-                                                   --path_clinical $metadata_path \
+                                                   --preprocessing_path $preprocessing_path \
                                                    --save_path $path_to_vae_results \
                                                    --save_model \
                                                    --save_model_path $model_path \
@@ -72,8 +76,7 @@ echo "${path_to_best_model}"
 adjust_path=${current_dir}/data/interim/${today}_adjust_reconstruction
 recnet_path=${current_dir}/models/${today}_adjust_reconstruction/network_reconstruction.pth
 python src/adjust_reconstruction.py --model_path $path_to_best_model \
-                                    --data_path $preprocessed_data_path \
-                                    --clinical_path $metadata_path \
+                                    --preprocessing_path $preprocessing_path \
                                     --output_path $adjust_path \
                                     --output_recnet_path $recnet_path \
                                     --batch_size 8 \
