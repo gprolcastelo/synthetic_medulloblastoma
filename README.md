@@ -92,6 +92,7 @@ For us, this took about 18 hours on 112 cores.
 14. `src/genes_reconstruction.py` checks the reconstruction error of the genes and patients with Wasserstein distance, before and after applying the postprocessing network to the VAE-decoded data.
 15. `python src/diff_genes_comparison.py` finds the overlap between differentially expressed genes and external data (Northcott et al. 2019 and Núñez-Carpintero et al. 2021).
 16. `src/gprofiler.R` performs gene set enrichment analysis on the genes determined to be important in step 12.
+17. `Boolean_model_analysis` folder with an R Markdown file to reproduce the Boolean model results' analysis.
 
 Finally, the Jupyter Notebook `final_analyses.ipynb` contains the code for ad-hoc processes that were not included in the `src` folder codes.
 

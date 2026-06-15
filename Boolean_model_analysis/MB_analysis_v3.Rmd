@@ -1,0 +1,686 @@
+---
+title: "Medulloblastoma models analysis"
+author: "Érica Garcia Verellen, Arnau Montagud"
+date: "2026 06 15"
+output: html_document
+---
+
+Note: All the scripts and data can be downloaded from https://github.com/gprolcastelo/synthetic_medulloblastoma
+
+# Set up
+
+## Packages
+
+First import the required packages.
+
+```{r setup}
+
+# Packages
+if (!require("pacman")) install.packages("pacman")
+list.of.packages <- c("ggplot2", "tidyverse", "magrittr", "factoextra", "FactoMineR", "RColorBrewer", "patchwork", "ggsignif", "ggrepel","circlize","grid")
+pacman::p_load(list.of.packages, character.only = TRUE)
+
+install.packages("BiocManager")
+BiocManager::install("ComplexHeatmap")
+library(ComplexHeatmap)
+
+```
+
+# Import and prepare data
+
+## Microarray data and metadata
+
+Please note that the data imported below have already been pre-processed according to the methods described in the paper.
+
+```{r data load, eval=TRUE, include=FALSE}
+
+data <- read.delim("./all_RNA_final.txt", sep="\t") 
+clinical_data <- read.delim("./augmented_metadata.csv", sep=",")
+colnames(clinical_data) <- c("Patient","Grouping")
+
+data1 <- full_join(data, clinical_data, by = c("Patient_ID"="Patient")) %>% mutate(Grouping2 = str_replace(
+  str_replace(
+    str_replace(Grouping, "Group_","G")
+    , "G3_G4","G3G4")
+  , "synthetic_","s_"))
+
+data1_2 <- data1 %>% 
+  filter(!Grouping2 %in% c("SHH", "WNT")) %>% 
+  select(!c(ROCK2, DEPTOR, CDK1, YES1, BCL2L1)) # removing most diff between synthetic and real
+
+data1_2_old <- data1 %>% 
+  filter(!Grouping2 %in% c("SHH", "WNT"))
+
+clinical_data <- clinical_data %>%
+  filter(!Grouping %in% c("SHH", "WNT")) 
+
+data2 <- data1_2 %>% column_to_rownames(var = "Patient_ID") %>% dplyr::select(-Grouping, -Grouping2)
+
+write_csv(data1_2, "all_sims.csv")
+
+```
+
+
+```{r color}
+
+color_palette = c("G3" = "#FFBF00", "s_G3" = "#AF7D00", "G4" = "#00CA8A", "s_G4" = "#058469", "G3-G4" = "#FF367B", "s_G3-G4" = "#9C0153")
+
+```
+
+# pathway analysis
+```{r pathway analysis}
+
+## load data
+df <- data1_2
+ 
+cols <- colnames(df)
+sample_id_col <- cols[1]
+label_cols <- cols[cols %in% c("Grouping", "Grouping2")]
+feature_cols <- setdiff(cols, c(sample_id_col, label_cols))
+
+# Choose Grouping2 as primary label (case-insensitive fallback)
+if ("Grouping2" %in% names(df)) {
+  group_col <- "Grouping2"
+} else {
+  idx <- which(tolower(names(df)) == "grouping2")
+  if (length(idx) != 1) stop("Could not find Grouping2 column")
+  group_col <- names(df)[idx]
+}
+
+cat("Sample ID column:", sample_id_col, "\n")
+cat("Label columns:", paste(label_cols, collapse = ", "), "\n")
+cat("Grouping2 counts:\n")
+print(table(df[[group_col]]))
+
+# Global range check
+global_min <- min(df[, feature_cols], na.rm = TRUE)
+global_max <- max(df[, feature_cols], na.rm = TRUE)
+cat("Global feature range:", global_min, "to", global_max, "\n")
+
+## pathway definitions
+all_features <- feature_cols
+
+pathways <- list(
+  Apoptosis = c("Apoptosis", "BAD", "BCL2","BCL2L1", "FOXO"),
+  Proliferation_CellCycle = c("Proliferation", "MYC", "CDC25B", "JUN", 
+                              "NR4A3", "ATF2", "CDK1", "CREB1","SIRT1"),
+  PI3K_AKT_mTOR = c("PI3K", "AKT1", "AKT2", "AKT3", "PDPK1", "PTEN", 
+                    "TSC", "mTORC1", "mTORC2", "EIF4E", "EIF4EBP1", 
+                    "FOXO", "Protein_synthesis", "DEPTOR",
+                    "PLCG1", "SNAI1", "PRKACA", "PRKCA", "PRKCB", 
+                    "PRKCG", "PRKCZ", "FUS", "RHEB"),
+  RAS_MAPK = c("GRB2", "SOS1", "SHC1", "HRAS", "KRAS", "NRAS", 
+               "ARAF", "RAF1", "BRAF", "MAP2K1", "MAP2K2", 
+               "MAPK1", "MAPK3", "RPS6KA1", "PTK2B", "PTPN11"),
+  RTK_Signalling = c("EGFR", "ERBB2", "ERBB3", "ERBB4", "EPHA2"),
+  Hippo_YAP = c("LATS1", "LATS2", "AMOTL2", "WWTR1", "YAP1", "WWP1", "YES1"),
+  Cytoskeleton_Actin = c("Actin_cytoskeleton_reorganization", "F_actin_dynamics",
+                         "Microtubule_polimerization", "Tubulin",
+                         "LIMK1", "LIMK2", "PAK1", "PAK2", "PAK3", "PAK4", 
+                         "CDC42", "CDC42BPA", "RAC1", "RHOA", "ROCK1", 
+                         "CFL1", "CFL2", "STMN1", "TTL", "ITCH", "PPP1R12A",
+                         "PPP1R12B", "CTTN", "ROCK2", "MP", 
+                         "CTNNB1"), 
+  Invasion_Motility = c("Cell_migration", "Neuron_migration", "Metastasis",
+                        "GNA13", "GIT1", "ARHGEF1", "ARHGEF11", "ARHGEF12", 
+                       "ARHGEF6", "SPART", "SRC", "SYN1",
+                       "NFE2L2")
+)
+
+pathways_ori <- pathways
+
+# Verify all nodes exist in matrix
+for (pw in names(pathways_ori)) {
+  available <- intersect(pathways_ori[[pw]], colnames(df))
+  cat(sprintf("%s: %d/%d nodes present\n", pw, length(available), length(pathways_ori[[pw]])))
+  pathways_ori[[pw]] <- available
+}
+pathways <- lapply(pathways_ori, function(nodes) intersect(nodes, all_features))
+pathways <- pathways[sapply(pathways, length) > 0]
+
+## compute pathway scores per sample
+pathway_scores <- lapply(names(pathways), function(pw) {
+  nodes <- pathways[[pw]]
+  rowMeans(df[, nodes, drop = FALSE], na.rm = TRUE)
+})
+names(pathway_scores) <- names(pathways)
+
+pathway_df <- as.data.frame(pathway_scores, stringsAsFactors = FALSE)
+pathway_df[[group_col]] <- df[[group_col]]
+
+## per-group summary stats
+long_scores <- pathway_df %>%
+  pivot_longer(cols = all_of(names(pathways)),
+               names_to = "Pathway",
+               values_to = "Mean_group") %>%
+  mutate(Group = .data[[group_col]])
+
+stats_df <- long_scores %>%
+  group_by(Pathway, Group) %>%
+  summarise(
+    N = n(),
+    Mean = mean(Mean_group),
+    SD = ifelse(n() > 1, sd(Mean_group), NA_real_),
+    .groups = "drop"
+  )
+
+## Kruskal–Wallis (ANOVA-like) per pathway
+kw_df <- long_scores %>%
+  group_by(Pathway) %>%
+  group_map(~ {
+    fit <- tryCatch(
+      kruskal.test(Mean_group ~ Group, data = .x),
+      error = function(e) NULL
+    )
+    if (is.null(fit)) {
+      tibble(Kruskal_H = NA_real_, Kruskal_p = NA_real_)
+    } else {
+      tibble(Kruskal_H = as.numeric(fit$statistic),
+             Kruskal_p = fit$p.value)
+    }
+  }) %>%
+  bind_rows() %>%
+  mutate(Pathway = names(pathways)) %>%
+  mutate(Significance = dplyr::case_when(
+    is.na(Kruskal_p)  ~ "",
+    Kruskal_p < 0.001 ~ "***",
+    Kruskal_p < 0.01  ~ "**",
+    Kruskal_p < 0.05  ~ "*",
+    TRUE              ~ "ns"
+  )) %>%
+  select(Pathway, Kruskal_H, Kruskal_p, Significance) %>%
+  arrange(Kruskal_p)
+
+## pairwise effect sizes and Mann–Whitney (Student's t) p-values
+unique_groups <- sort(unique(pathway_df[[group_col]]))
+
+pairwise_list <- list()
+
+for (pw in names(pathways)) {
+  for (i in seq_along(unique_groups)) {
+    for (j in (i + 1):length(unique_groups)) {
+      if (j > length(unique_groups) || i == j) next
+      g1 <- unique_groups[i]
+      g2 <- unique_groups[j]
+      v1 <- pathway_df[pathway_df[[group_col]] == g1, pw]
+      v2 <- pathway_df[pathway_df[[group_col]] == g2, pw]
+
+      m1 <- mean(v1); m2 <- mean(v2)
+      s1 <- sd(v1);   s2 <- sd(v2)
+      n1 <- length(v1); n2 <- length(v2)
+
+      if (n1 > 1 && n2 > 1) {
+        sp <- sqrt(((n1 - 1) * s1^2 + (n2 - 1) * s2^2) / (n1 + n2 - 2))
+        d <- if (sp > 0) (m1 - m2) / sp else NA_real_
+      } else {
+        d <- NA_real_
+      }
+
+      p_mw <- tryCatch(
+        wilcox.test(v1, v2, exact = FALSE)$p.value,
+        error = function(e) NA_real_
+      )
+
+      pairwise_list[[length(pairwise_list) + 1]] <- data.frame(
+        Pathway = pw,
+        Group1 = g1,
+        Group2 = g2,
+        MeanDiff = m1 - m2,
+        Cohens_d = d,
+        MW_p = p_mw,
+        MW_Significance = dplyr::case_when(
+          is.na(p_mw)  ~ "",
+          p_mw < 0.001 ~ "***",
+          p_mw < 0.01  ~ "**",
+          p_mw < 0.05  ~ "*",
+          TRUE         ~ "ns"
+        ),
+        stringsAsFactors = FALSE
+      )
+    }
+  }
+}
+
+pairwise_df <- bind_rows(pairwise_list)
+
+## mean matrix (pathway x group) 
+mean_table <- stats_df %>%
+  select(Pathway, Group, Mean) %>%
+  pivot_wider(names_from = Group, values_from = Mean)
+
+```
+
+```{r figure pathways}
+
+library(ComplexHeatmap)
+
+group_levels <- c("G3", "s_G3", "G3-G4", "s_G3-G4", "G4", "s_G4")
+group_levels <- group_levels[group_levels %in% unique(pathway_df[[group_col]])]
+
+pathway_df[[group_col]] <- factor(pathway_df[[group_col]], levels = group_levels)
+group_colours <- color_palette[group_levels]
+
+mean_by_group <- pathway_df %>%
+  group_by(.data[[group_col]]) %>%
+  summarise(across(all_of(names(pathways)), mean), .groups = "drop")
+
+heatmap_mat <- as.data.frame(mean_by_group)
+rownames(heatmap_mat) <- heatmap_mat[[group_col]]
+heatmap_mat[[group_col]] <- NULL
+heatmap_mat <- t(as.matrix(heatmap_mat))
+
+# optional z-score by pathway for relative interpretation
+heatmap_mat_z <- t(scale(t(heatmap_mat)))
+
+# column annotation
+ha <- HeatmapAnnotation(
+  Group = colnames(heatmap_mat_z),
+  col = list(Group = group_colours),
+  annotation_name_side = "left",
+  show_annotation_name = T,
+  show_legend = FALSE
+)
+
+# colour function for z-scored pathway means
+col_fun <- colorRamp2(
+  c(-2, 0, 2),
+  c("#2166ac", "white", "#b2182b")
+)
+
+ht <- Heatmap(
+  heatmap_mat_z,
+  name = "Z-score",
+  col = col_fun,
+  top_annotation = ha,
+  cluster_rows = TRUE,
+  cluster_columns = T,
+  row_names_side = "left",
+  row_names_gp = gpar(fontsize = 10),
+  column_names_side = "top",
+  column_names_gp = gpar(fontsize = 10),
+  column_names_rot = 45,
+  heatmap_legend_param = list(
+    title = "Relative\nactivation",
+    at = c(-2, -1, 0, 1, 2)
+  ),
+  rect_gp = gpar(col = "white", lwd = 1),
+  border = TRUE
+)
+
+draw(ht, heatmap_legend_side = "right")
+
+```
+
+## Pairwise analysis
+```{r pairwise}
+
+pair <- pairwise_df %>%
+  mutate(Comparison = paste(Group1, "vs", Group2))
+
+path_order <- pair %>% distinct(Pathway) %>% pull(Pathway)
+comp_order <- pair %>% distinct(Comparison) %>% pull(Comparison)
+
+mat_d <- pair %>%
+  select(Pathway, Comparison, Cohens_d) %>%
+  pivot_wider(names_from = Comparison, values_from = Cohens_d) %>%
+  as.data.frame()
+
+rownames(mat_d) <- mat_d$Pathway
+mat_d$Pathway <- NULL
+mat_d <- as.matrix(mat_d[path_order, comp_order])
+
+mat_sig <- pair %>%
+  select(Pathway, Comparison, MW_Significance) %>%
+  pivot_wider(names_from = Comparison, values_from = MW_Significance) %>%
+  as.data.frame()
+
+rownames(mat_sig) <- mat_sig$Pathway
+mat_sig$Pathway <- NULL
+mat_sig <- as.matrix(mat_sig[path_order, comp_order])
+
+col_fun <- colorRamp2(
+  c(min(mat_d, na.rm = TRUE), 0, max(mat_d, na.rm = TRUE)),
+  c("#2b83ba", "white", "#d7191c")
+)
+
+col_order <- c(
+  # Same-type comparisons
+  "G3 vs s_G3",
+  "G3-G4 vs s_G3-G4",
+  "G4 vs s_G4",
+  # G3 vs the rest
+  "G3 vs G3-G4",
+  "G3 vs s_G3-G4",
+  "G3 vs G4",
+  "G3 vs s_G4",
+  # G3-G4 vs the rest
+  "G3-G4 vs G4",
+  "G3-G4 vs s_G3",
+  "G3-G4 vs s_G4",
+  # G4 vs the rest
+  "G4 vs s_G3",
+  "G4 vs s_G3-G4",
+  # s_ vs s_
+  "s_G3 vs s_G3-G4",
+  "s_G3 vs s_G4",
+  "s_G3-G4 vs s_G4"
+)
+
+ht_pw<-Heatmap(
+  mat_d,
+  name = "Cohen's d",
+  col = col_fun,
+  cluster_rows = TRUE,
+  cluster_columns = FALSE,
+  column_order = col_order,          # <-- added
+  column_names_rot = 45,
+  row_names_gp = gpar(fontsize = 10),
+  column_names_gp = gpar(fontsize = 8),
+  cell_fun = function(j, i, x, y, w, h, fill) {
+    s <- mat_sig[i, j]
+    if (!is.na(s) && s != "ns") {
+      grid.text(s, x, y, gp = gpar(fontsize = 10, fontface = "bold"))
+    }
+  }
+)
+
+ht_pw
+
+```
+
+
+```{r saving files heatmap}
+
+write.csv(stats_df, file = "./pathway_group_stats_R.csv", row.names = FALSE)
+write.csv(kw_df, file = "./pathway_kw_R.csv", row.names = FALSE)
+write.csv(pairwise_df, file = "./pathway_pairwise_R.csv", row.names = FALSE)
+write.csv(mean_table, file = "./pathway_group_means_matrix_R.csv", row.names = TRUE)
+
+png(
+  filename = "./model_heatmap_pathways.png",
+  units = "in",
+  width = 7,
+  height = 6.5,
+  res = 300)
+draw(ht, heatmap_legend_side = "right", annotation_legend_side = "right")
+dev.off()
+
+png(
+  filename = "./model_heatmap_pathways_pairwise.png",
+  units = "in",
+  width = 8,
+  height = 4,
+  res = 300)
+draw(ht_pw, heatmap_legend_side = "right", annotation_legend_side = "right")
+dev.off()
+
+```
+
+## Pathways correlation to PC1 and spread
+```{r PCA}
+
+# PCA
+res.pca <- PCA(data2, graph = F)
+
+# extract some parts for plotting
+PC1 <- res.pca$ind$coord[,1]
+PC2 <- res.pca$ind$coord[,2]
+PCs <- data.frame(cbind(PC1, PC2))
+
+# Build aligned data frame using data2 rownames as Patient_ID
+pathway_aligned <- pathway_df |>
+  mutate(Patient_ID = rownames(data2),
+         PC1        = res.pca$ind$coord[, 1])
+
+# Build aligned data frame using data2 rownames as Patient_ID
+pathway_aligned <- pathway_df |>
+  mutate(Patient_ID = rownames(data2),
+         PC1 = res.pca$ind$coord[, 1])
+
+group_order <- c("G3", "s_G3", "G3-G4", "s_G3-G4", "G4", "s_G4")
+
+pca_plot_df <- PCs |>
+  tibble::rownames_to_column("Patient_ID") |>
+  left_join(pathway_aligned |> 
+              select(Patient_ID, Grouping2), by = "Patient_ID") |>
+  mutate(Grouping2 = factor(Grouping2, levels = group_order))
+
+centroids <- pca_plot_df |>
+  group_by(Grouping2) |>
+  summarise(PC1 = mean(PC1), PC2 = mean(PC2), .groups = "drop")
+
+pc1_var <- round(res.pca$eig[1,2], 2) 
+pc2_var <- round(res.pca$eig[2,2], 2)
+pc3_var <- round(res.pca$eig[3,2], 2)
+
+PCA <- ggplot(pca_plot_df, aes(x = PC1, y = PC2, colour = Grouping2)) +
+  geom_point(alpha = 0.3, size = 1.5) +
+  geom_point(data = centroids, aes(fill = Grouping2),
+             # shape = 21, 
+             shape = 2, 
+             # colour = "black", 
+             size = 5, stroke = 1.2) +
+  geom_label(data = centroids, aes(label = Grouping2),
+             # colour = "black", 
+             fill = "white", size = 3,
+             # nudge_y = 1.2,
+             nudge_y = 0.5,
+             show.legend = FALSE) +
+  scale_colour_manual(values = color_palette) +
+  scale_fill_manual(values = color_palette) +
+  labs(x = paste0("PC1 (", round(pc1_var, 1), "%)"),
+       y = paste0("PC2 (", round(pc2_var, 1), "%)"),
+       colour = "Grouping2") +
+  guides(fill = "none") +
+  theme_bw()
+
+PCA
+ggsave("PCA_centroids.png", width = 10, height = 9)
+
+```
+
+```{r corr and spread}
+
+pathway_pca <- pca_plot_df |>
+    left_join(pathway_aligned, by = c("Patient_ID", "Grouping2", "PC1"))
+
+pathway_names <- names(pathways)
+
+cor_table_full <- c("G3", "s_G3", "G3-G4", "s_G3-G4", "G4", "s_G4") |>
+  purrr::map_dfr(~ {
+    d <- pathway_pca |> filter(Grouping2 == .x)
+    cors <- sapply(pathway_names, function(pw) {
+      round(cor(d[[pw]], d$PC1, method = "spearman"), 3)})
+    tibble(Group = .x, n = nrow(d)) |> bind_cols(as_tibble_row(cors))
+  }) |>
+  mutate(Group = factor(Group, levels = group_order))
+
+cor_table_full
+write.csv(cor_table_full, file = "./PC1_correlation_pathways.csv", row.names = FALSE)
+
+pairs <- list(
+  "G3 vs s_G3" = c("G3", "s_G3"),
+  "G3-G4 vs s_G3-G4" = c("G3-G4", "s_G3-G4"),
+  "G4 vs s_G4" = c("G4", "s_G4")
+)
+
+pairwise2_df <- purrr::map_dfr(names(pairs), function(pair_name) {
+  grps <- pairs[[pair_name]]
+
+  pathway_aligned |>
+    filter(Grouping2 %in% grps) |>
+    pivot_longer(cols = all_of(pathway_names), names_to = "Pathway", values_to = "Score") |>
+    group_by(Pathway) |>
+    group_modify(~ {
+      d <- .x
+      wilcox <- tryCatch(
+        wilcox.test(Score ~ Grouping2, data = d, exact = FALSE),
+        error = function(e) NULL
+      )
+      fk <- tryCatch(
+        fligner.test(Score ~ Grouping2, data = d),
+        error = function(e) NULL
+      )
+      tibble(
+        Wilcox_W = if (is.null(wilcox)) NA_real_ else as.numeric(wilcox$statistic),
+        Wilcox_p = if (is.null(wilcox)) NA_real_ else wilcox$p.value,
+        FK_stat  = if (is.null(fk))     NA_real_ else as.numeric(fk$statistic),
+        FK_p     = if (is.null(fk))     NA_real_ else fk$p.value
+      )}) |>
+    ungroup() |>
+    mutate(Pair = pair_name)}) |>
+  mutate(
+    Wilcox_sig = dplyr::case_when(
+      is.na(Wilcox_p)  ~ "",
+      Wilcox_p < 0.001 ~ "***",
+      Wilcox_p < 0.01  ~ "**",
+      Wilcox_p < 0.05  ~ "*",
+      TRUE             ~ "ns"
+    ),
+    FK_sig = dplyr::case_when(
+      is.na(FK_p)  ~ "",
+      FK_p < 0.001 ~ "***",
+      FK_p < 0.01  ~ "**",
+      FK_p < 0.05  ~ "*",
+      TRUE         ~ "ns"
+    )
+  ) |>
+  select(Pair, Pathway, Wilcox_W, Wilcox_p, Wilcox_sig, FK_stat, FK_p, FK_sig)
+
+pairwise2_df |> filter(Wilcox_p < 0.05 | FK_p < 0.05)
+
+write.csv(pairwise2_df, file = "./PC1_correlation_pathways_sig.csv", row.names = FALSE)
+
+# Finding outliers of pathways 
+# IQR-based outlier check per group
+# Pathways with correlation > 0.5 on either real or synthetic: Invasion_Motility, RTK_Signalling, PI3K
+# Pathways with FK_p < 0.05: RAS_MAPK
+
+# Invasion
+inv_mot <- pathway_aligned |>
+  filter(Grouping2 %in% c("G3-G4", "s_G3-G4")) |>
+  select(Grouping2, Invasion_Motility)
+
+inv_mot2 <- inv_mot |>
+  group_by(Grouping2) |>
+  summarise(
+    n        = n(),
+    median   = median(Invasion_Motility),
+    IQR      = IQR(Invasion_Motility),
+    Q1       = quantile(Invasion_Motility, 0.25),
+    Q3       = quantile(Invasion_Motility, 0.75),
+    n_outliers = sum(Invasion_Motility < Q1 - 1.5 * IQR(Invasion_Motility) |
+                     Invasion_Motility > Q3 + 1.5 * IQR(Invasion_Motility))
+  ) |> mutate(Pathway = "Invasion_Motility")
+
+inv_mot_fig <- ggplot(inv_mot, aes(x = Invasion_Motility, fill = Grouping2, colour = Grouping2)) +
+  geom_density(alpha = 0.4) +
+  geom_rug(aes(colour = Grouping2), alpha = 0.6) +
+  scale_fill_manual(values   = color_palette) +
+  scale_colour_manual(values = color_palette) +
+  labs(x = "Invasion_Motility score", y = "Density",
+       fill = "Group", colour = "Group") +
+  theme_bw()
+
+# RTK
+rtk <- pathway_aligned |>
+  filter(Grouping2 %in% c("G3-G4", "s_G3-G4")) |>
+  select(Grouping2, RTK_Signalling) #|> mutate(Grouping2 = factor(Grouping2, levels = inv_mot_levels))
+
+rtk2 <- rtk |>
+  group_by(Grouping2) |>
+  summarise(
+    n          = n(),
+    median     = median(RTK_Signalling),
+    IQR        = IQR(RTK_Signalling),
+    Q1         = quantile(RTK_Signalling, 0.25),
+    Q3         = quantile(RTK_Signalling, 0.75),
+    n_outliers = sum(RTK_Signalling < Q1 - 1.5 * IQR(RTK_Signalling) |
+                     RTK_Signalling > Q3 + 1.5 * IQR(RTK_Signalling))
+  ) |> mutate(Pathway = "RTK_Signalling")
+
+rtk_fig <- ggplot(rtk, aes(x = RTK_Signalling, fill = Grouping2, colour = Grouping2)) +
+  geom_density(alpha = 0.4) +
+  geom_rug(alpha = 0.6) +
+  scale_fill_manual(values   = color_palette) +
+  scale_colour_manual(values = color_palette) +
+  labs(x = "RTK_Signalling score", y = "Density",
+       fill = "Group", colour = "Group") +
+  theme_bw()
+
+# PI3K
+pi3k <- pathway_aligned |>
+  filter(Grouping2 %in% c("G3-G4", "s_G3-G4")) |>
+  select(Grouping2, PI3K_AKT_mTOR) #|> mutate(Grouping2 = factor(Grouping2, levels = inv_mot_levels))
+
+pi3k2 <- pi3k |>
+  group_by(Grouping2) |>
+  summarise(
+    n          = n(),
+    median     = median(PI3K_AKT_mTOR),
+    IQR        = IQR(PI3K_AKT_mTOR),
+    Q1         = quantile(PI3K_AKT_mTOR, 0.25),
+    Q3         = quantile(PI3K_AKT_mTOR, 0.75),
+    n_outliers = sum(PI3K_AKT_mTOR < Q1 - 1.5 * IQR(PI3K_AKT_mTOR) |
+                     PI3K_AKT_mTOR > Q3 + 1.5 * IQR(PI3K_AKT_mTOR))
+  ) |> mutate(Pathway = "PI3K_AKT_mTOR")
+
+pi3k_fig <- ggplot(pi3k, aes(x = PI3K_AKT_mTOR, fill = Grouping2, colour = Grouping2)) +
+  geom_density(alpha = 0.4) +
+  geom_rug(alpha = 0.6) +
+  scale_fill_manual(values   = color_palette) +
+  scale_colour_manual(values = color_palette) +
+  labs(x = "PI3K_AKT_mTOR score", y = "Density",
+       fill = "Group", colour = "Group") +
+  theme_bw()
+
+outliers <- rbind(inv_mot2, pi3k2, ras_mot2, rtk2) |> relocate(Pathway)
+
+(inv_mot_fig  | pi3k_fig | rtk_fig) + plot_layout(axis_titles = "collect", guides = "collect")
+ggsave("G3G4_vs_sG3G4_pathways.png", width = 10, height = 5, dpi=300)
+
+```
+
+```{r Distribution of key pathway scores}
+
+g3g4 <- pathway_pca |> filter(Grouping2 == "G3-G4")
+sg3g4 <- pathway_pca |> filter(Grouping2 == "s_G3-G4")
+
+# Shared scale limits per pathway
+inv_range <- range(c(
+  (pathway_pca |> filter(Grouping2 == "G3-G4"))$Invasion_Motility, 
+  (pathway_pca |> filter(Grouping2 == "s_G3-G4"))$Invasion_Motility))
+pi3k_range <- range(c(
+  (pathway_pca |> filter(Grouping2 == "G3-G4"))$PI3K_AKT_mTOR, 
+  (pathway_pca |> filter(Grouping2 == "s_G3-G4"))$PI3K_AKT_mTOR))
+rtk_range <- range(c(
+  (pathway_pca |> filter(Grouping2 == "G3-G4"))$RTK_Signalling, 
+  (pathway_pca |> filter(Grouping2 == "s_G3-G4"))$RTK_Signalling))
+
+make_biplot <- function(highlighted, pathway, title, range) {
+  ggplot() +
+    geom_point(data = pca_plot_df, aes(x = PC1, y = PC2),
+               colour = "grey80", size = 0.8, alpha = 0.4) +
+    geom_point(data = highlighted, aes(x = PC1, y = PC2, colour = .data[[pathway]]),
+               size = 2) +
+    scale_colour_gradient(low = "#2C7BB6", high = "#D7191C",
+                          limits = range, name = pathway) +
+    labs(title = title,
+         x = paste0("PC1 (", round(pc1_var, 1), "%)"),
+         y = paste0("PC2 (", round(pc2_var, 1), "%)")) +
+    theme_bw() +
+    theme(plot.title = element_text(size = 10, face = "bold"))
+}
+
+p1 <- make_biplot(g3g4,  "Invasion_Motility", "G3-G4 — Invasion_Motility",   inv_range)
+p2 <- make_biplot(g3g4,  "PI3K_AKT_mTOR",    "G3-G4 — PI3K_AKT_mTOR",      pi3k_range)
+p3 <- make_biplot(sg3g4, "Invasion_Motility", "s_G3-G4 — Invasion_Motility", inv_range)
+p4 <- make_biplot(sg3g4, "PI3K_AKT_mTOR",    "s_G3-G4 — PI3K_AKT_mTOR",    pi3k_range)
+
+p2a <- make_biplot(g3g4,  "RTK_Signalling",    "G3-G4 — RTK_Signalling",      rtk_range)
+p4a <- make_biplot(sg3g4, "RTK_Signalling",    "s_G3-G4 — RTK_Signalling",    rtk_range)
+
+p1 + p2 + p2a + p3 + p4 + p4a + plot_layout(axis_titles = "collect", guides = "collect", design = "ABC\nDEF")
+ggsave("PCA_G3G4_vs_sG3G4_pathways.png", width = 14, height = 7)
+
+```
